@@ -6,7 +6,7 @@ async function bootstrap() {
 
   const port = process.env.APP_PORT;
   
-  app.setGlobalPrefix('rest');
+  app.setGlobalPrefix('ws-rest');
   
   app.enableCors({
     origin: '*',
