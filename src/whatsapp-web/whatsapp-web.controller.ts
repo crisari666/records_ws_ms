@@ -6,8 +6,11 @@ export class WhatsappWebController {
   constructor(private readonly whatsappWebService: WhatsappWebService) {}
 
   @Post('session/:id')
-  async createSession(@Param('id') id: string) {
-    return this.whatsappWebService.createSession(id);
+  async createSession(
+    @Param('id') id: string,
+    @Body() body?: { groupId?: string },
+  ) {
+    return this.whatsappWebService.createSession(id, body);
   }
 
   @Get('sessions')
@@ -84,6 +87,15 @@ export class WhatsappWebController {
     @Param('messageId') messageId: string,
   ) {
     return this.whatsappWebService.getStoredMessageById(id, messageId);
+  }
+
+  @Post('session/:id/messages/:messageId/group')
+  async setMessageGroup(
+    @Param('id') id: string,
+    @Param('messageId') messageId: string,
+    @Body() body: { groupId: string },
+  ) {
+    return this.whatsappWebService.setMessageGroup(id, messageId, body.groupId);
   }
 
   @Get('session/:id/messages/:messageId/edits')

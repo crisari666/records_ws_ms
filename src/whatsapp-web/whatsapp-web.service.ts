@@ -12,6 +12,7 @@ import { WhatsAppMessage, WhatsAppMessageDocument } from './schemas/whatsapp-mes
 import { WhatsappStorageService } from './whatsapp-storage.service';
 import { WhatsappWebGateway } from './whatsapp-web.gateway';
 import * as path from 'path';
+import { WhatsappAlertsService } from './whatsapp-alerts.service';
 
 @Injectable()
 export class WhatsappWebService implements OnModuleInit {
@@ -27,6 +28,7 @@ export class WhatsappWebService implements OnModuleInit {
     private readonly configService: ConfigService,
     private readonly storageService: WhatsappStorageService,
     private readonly gateway: WhatsappWebGateway,
+    private readonly alertsService: WhatsappAlertsService,
   ) {}
 
   async onModuleInit() {
@@ -92,7 +94,7 @@ export class WhatsappWebService implements OnModuleInit {
   /**
    * Store session metadata in MongoDB
    */
-  private async storeSessionMetadata(sessionId: string, metadata: { status: string; lastSeen: Date }) {
+  private async storeSessionMetadata(sessionId: string, metadata: { status?: string; lastSeen?: Date; isDisconnected?: boolean; disconnectedAt?: Date; refId?: mongoose.Types.ObjectId; groupId?: mongoose.Types.ObjectId }) {
     try {
       await this.whatsAppSessionModel.updateOne(
         { sessionId: sessionId },
@@ -122,6 +124,8 @@ export class WhatsappWebService implements OnModuleInit {
         status: 'qr_generated', 
         lastSeen: new Date() 
       });
+
+
       
       this.emitQrEvent(sessionId, qr);
     });
@@ -134,7 +138,8 @@ export class WhatsappWebService implements OnModuleInit {
       }
       await this.storeSessionMetadata(sessionId, { 
         status: 'ready', 
-        lastSeen: new Date() 
+        lastSeen: new Date(),
+        isDisconnected: false
       });
       
       this.emitReadyEvent(sessionId);
@@ -190,13 +195,24 @@ export class WhatsappWebService implements OnModuleInit {
         status: 'disconnected', 
         lastSeen: new Date() 
       });
+
+      // Create a disconnection alert linked to the session's Mongo _id
+      try {
+        const sessionDoc = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
+        await this.whatsAppSessionModel.updateOne({ sessionId }, { $set: { isDisconnected: true, disconnectedAt: new Date() } });
+        if (sessionDoc?._id) {
+          await this.alertsService.createDisconnectedAlert(sessionDoc._id as mongoose.Types.ObjectId, `Session ${sessionId} disconnected: ${reason}`);
+        }
+      } catch (e) {
+        this.logger.error(`Failed to create disconnected alert for ${sessionId}`, e as Error);
+      }
       
+      this.sessions.delete(sessionId);
       // Auto-reconnect after 5 seconds
-      setTimeout(async () => {
-        this.logger.log(`🔄 Attempting to reconnect session ${sessionId}`);
-        this.sessions.delete(sessionId);
-        await this.createSession(sessionId);
-      }, 5000);
+      // setTimeout(async () => {
+        // this.logger.log(`🔄 Attempting to reconnect session ${sessionId}`);
+        //await this.createSession(sessionId);
+      // }, 5000);
     });
 
     client.on('message_revoke_me', async (message) => {
@@ -248,12 +264,16 @@ export class WhatsappWebService implements OnModuleInit {
   /**
    * Create a new WhatsApp session
    */
-  async createSession(sessionId: string) {
+  async createSession(sessionId: string, options?: { groupId?: string }) {
     try {
       console.log('createSession or restore session', sessionId);
       
       // Check if session already exists in memory and is ready/authenticated
       const existingSession = this.sessions.get(sessionId);
+
+      console.log({ existingSession });
+      
+      
       if (existingSession && existingSession.isReady) {
         this.logger.warn(`Session ${sessionId} already exists and is ready`);
         return { success: false, sessionId, message: 'Session already exists and is authenticated' };
@@ -287,10 +307,15 @@ export class WhatsappWebService implements OnModuleInit {
 
       this.logger.log(`🔨 Creating session: ${sessionId}`);
     
-      // Store session metadata
+      // Store session metadata (optionally include groupId mapped to refId)
+      let refObjectId: mongoose.Types.ObjectId | undefined;
+      if (options?.groupId && mongoose.Types.ObjectId.isValid(options.groupId)) {
+        refObjectId = new mongoose.Types.ObjectId(options.groupId);
+      }
       await this.storeSessionMetadata(sessionId, { 
         status: 'initializing', 
-        lastSeen: new Date() 
+        lastSeen: new Date(),
+        ...(refObjectId ? { refId: refObjectId } : {}),
       });
 
       // Puppeteer options
@@ -791,6 +816,26 @@ export class WhatsappWebService implements OnModuleInit {
    */
   async getStoredChat(sessionId: string, chatId: string) {
     return this.storageService.getStoredChat(sessionId, chatId);
+  }
+
+  // Event emitter methods using WebSocket
+  async setMessageGroup(sessionId: string, messageId: string, groupId: string) {
+    try {
+      if (!groupId) {
+        throw new Error('groupId is required');
+      }
+      const result = await this.whatsAppMessageModel.updateOne(
+        { sessionId, messageId },
+        { $set: { groupId } },
+      );
+      if (result.matchedCount === 0) {
+        throw new Error('Message not found');
+      }
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Error setting groupId for message ${messageId} in session ${sessionId}: ${error.message}`);
+      throw new Error(`Failed to set groupId: ${error.message}`);
+    }
   }
 
   // Event emitter methods using WebSocket

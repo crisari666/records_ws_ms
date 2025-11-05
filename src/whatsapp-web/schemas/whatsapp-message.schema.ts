@@ -17,6 +17,10 @@ export class WhatsAppMessage {
   @Prop({ required: true, index: true })
   chatId: string;
 
+  // Optional group ID (for group chats)
+  @Prop({ required: false, index: true })
+  groupId?: string;
+
   // Message body (stores the last/latest message body)
   @Prop({ type: String, default: null })
   body: string;
