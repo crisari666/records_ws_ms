@@ -11,7 +11,7 @@ import { Logger } from '@nestjs/common';
   cors: {
     origin: '*',
   },
-  namespace: '/whatsapp',
+  //namespace: '/whatsapp',
 })
 export class WhatsappWebGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
