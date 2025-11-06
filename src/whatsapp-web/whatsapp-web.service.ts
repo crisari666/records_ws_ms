@@ -164,10 +164,33 @@ export class WhatsappWebService implements OnModuleInit {
     
     client.on('message_create', async (message) => {
       try {
-        this.logger.log(`📤 Message received in session ${sessionId}: ${message.body?.substring(0, 50) || 'media message'}`);
-        console.log('message', message);
-        
+        this.logger.log(`📤 Message received in session ${sessionId}: ${message.body?.substring(0, 50) || 'media message'}`);        
         await this.storageService.saveMessage(sessionId, message);
+        
+        // Emit socket event to the session room with the same structure as getStoredMessages
+        const chatId = message.id.remote || message.from || message.to;
+        const messageData = {
+          messageId: message.id._serialized,
+          chatId: chatId,
+          body: message.body || '',
+          type: message.type,
+          from: message.from,
+          to: message.to,
+          author: message.author || null,
+          fromMe: message.fromMe,
+          timestamp: message.timestamp,
+          isDeleted: false,
+          deletedAt: null,
+          deletedBy: null,
+          edition: [],
+          hasMedia: message.hasMedia || false,
+          mediaType: message.hasMedia ? message.type : null,
+          hasQuotedMsg: message.hasQuotedMsg || false,
+          isForwarded: message.isForwarded || false,
+          isStarred: message.isStarred || false,
+        };
+        
+        this.emitNewMessageEvent(sessionId, messageData);
       } catch (error) {
         this.logger.error(`Error handling message_create: ${error.message}`);
       }
@@ -271,7 +294,7 @@ export class WhatsappWebService implements OnModuleInit {
       // Check if session already exists in memory and is ready/authenticated
       const existingSession = this.sessions.get(sessionId);
 
-      console.log({ existingSession });
+      //console.log({ existingSession });
       
       
       if (existingSession && existingSession.isReady) {
@@ -851,6 +874,10 @@ export class WhatsappWebService implements OnModuleInit {
 
   private emitAuthFailureEvent(sessionId: string, error: any) {
     this.gateway.emitAuthFailure(sessionId, error);
+  }
+
+  private emitNewMessageEvent(sessionId: string, messageData: any) {
+    this.gateway.emitNewMessage(sessionId, messageData);
   }
 
   private async handleSessionClosed(sessionId: string, chatId?: string) {
