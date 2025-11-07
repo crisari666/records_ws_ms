@@ -6,13 +6,12 @@ export type WhatsAppChatDocument = WhatsAppChat & Document;
 @Schema({ timestamps: true })
 export class WhatsAppChat {
   // Chat ID from WhatsApp
-  @Prop({ required: true, index: true, unique: true })
+  @Prop({ required: true, index: true })
   chatId: string;
 
   // Session ID to track which session the chat belongs to
   @Prop({ required: true, index: true })
   sessionId: string;
-
   // Chat name
   @Prop({ required: true })
   name: string;

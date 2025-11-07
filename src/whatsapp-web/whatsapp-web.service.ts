@@ -12,6 +12,7 @@ import { WhatsAppMessage, WhatsAppMessageDocument } from './schemas/whatsapp-mes
 import { WhatsappStorageService } from './whatsapp-storage.service';
 import { WhatsappWebGateway } from './whatsapp-web.gateway';
 import * as path from 'path';
+import * as fs from 'fs/promises';
 import { WhatsappAlertsService } from './whatsapp-alerts.service';
 
 @Injectable()
@@ -45,6 +46,7 @@ export class WhatsappWebService implements OnModuleInit {
       this.logger.warn('Session initialization already in progress');
       return;
     }
+
 
     this.isInitializing = true;
     
@@ -166,6 +168,16 @@ export class WhatsappWebService implements OnModuleInit {
       try {
         this.logger.log(`📤 Message received in session ${sessionId}: ${message.body?.substring(0, 50) || 'media message'}`);        
         await this.storageService.saveMessage(sessionId, message);
+
+        // Get the chat from the session and save/update it in the database
+        try {
+          const chat = await message.getChat();
+          await this.storageService.saveChat(sessionId, chat);
+          this.logger.debug(`💾 Chat saved/updated: ${chat.id._serialized}`);
+        } catch (chatError) {
+          this.logger.warn(`Error saving chat for message: ${chatError.message}`);
+          // Continue execution even if chat save fails
+        }
         
         // Emit socket event to the session room with the same structure as getStoredMessages
         const chatId = message.id.remote || message.from || message.to;
@@ -285,9 +297,34 @@ export class WhatsappWebService implements OnModuleInit {
   }
   
   /**
+   * Remove session folder to clean up lock files
+   */
+  private async removeSessionFolder(sessionId: string): Promise<void> {
+    try {
+      const sessionFolder = path.join(this.sessionPath, `session-${sessionId}`);
+      await fs.rm(sessionFolder, { recursive: true, force: true });
+      this.logger.log(`🧹 Removed session folder: ${sessionFolder}`);
+    } catch (error) {
+      this.logger.warn(`⚠️ Error removing session folder for ${sessionId}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Check if error is related to SingletonLock
+   */
+  private isSingletonLockError(error: any): boolean {
+    const errorMessage = error?.message || error?.toString() || '';
+    const errorStack = error?.stack || '';
+    const fullError = `${errorMessage} ${errorStack}`;
+    return fullError.includes('SingletonLock') || 
+           fullError.includes('Failed to create a ProcessSingleton') ||
+           (fullError.includes('File exists') && fullError.includes('session-'));
+  }
+
+  /**
    * Create a new WhatsApp session
    */
-  async createSession(sessionId: string, options?: { groupId?: string }) {
+  async createSession(sessionId: string, options?: { groupId?: string }, retryCount: number = 0) {
     try {
       console.log('createSession or restore session', sessionId);
       
@@ -340,7 +377,7 @@ export class WhatsappWebService implements OnModuleInit {
         lastSeen: new Date(),
         ...(refObjectId ? { refId: refObjectId } : {}),
       });
-
+      
       // Puppeteer options
       // Get the executable path to ensure Chromium is found
       const executablePath = puppeteer.executablePath();
@@ -351,9 +388,11 @@ export class WhatsappWebService implements OnModuleInit {
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
           '--disable-gpu',
           '--no-zygote',
           '--single-process',
+          
         ],
       };
 
@@ -388,6 +427,24 @@ export class WhatsappWebService implements OnModuleInit {
       return { success: true, sessionId, message: 'Session created successfully' };
     } catch (error) {
       this.logger.error(`❌ Error creating session ${sessionId}:`, error);
+      
+      // Check if this is a SingletonLock error and we haven't retried yet
+      if (this.isSingletonLockError(error) && retryCount === 0) {
+        this.logger.warn(`🔒 SingletonLock error detected for session ${sessionId}, removing session folder and retrying...`);
+        
+        // Remove the session folder to clean up lock files
+        await this.removeSessionFolder(sessionId);
+        
+        // Remove from sessions if it was added
+        this.sessions.delete(sessionId);
+        
+        // Wait a bit before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Retry creating the session
+        this.logger.log(`🔄 Retrying session creation for ${sessionId}...`);
+        return this.createSession(sessionId, options, retryCount + 1);
+      }
       
       // Remove from sessions if it was added
       this.sessions.delete(sessionId);
@@ -686,7 +743,7 @@ export class WhatsappWebService implements OnModuleInit {
       
       if (chatId) {
         query.chatId = chatId;
-      }
+    }
       console.log('options', options);
       // if (!options?.includeDeleted) {
       //   query.isDeleted = false;
@@ -835,6 +892,7 @@ export class WhatsappWebService implements OnModuleInit {
   }) {
     return this.storageService.getStoredChats(sessionId, options);
   }
+  
 
   /**
    * Get a specific stored chat from database

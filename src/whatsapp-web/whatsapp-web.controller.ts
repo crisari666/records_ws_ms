@@ -115,8 +115,8 @@ export class WhatsappWebController {
     @Query('skip') skip?: number,
   ) {
     return this.whatsappWebService.getStoredChats(id, {
-      archived: archived === true,
-      isGroup: isGroup === true,
+      archived: archived,
+      isGroup: isGroup,
       limit: limit ? parseInt(limit as any) : undefined,
       skip: skip ? parseInt(skip as any) : undefined,
     });

@@ -31,6 +31,7 @@ export class WhatsappStorageService {
         pinned: chat.pinned,
         isReadOnly: chat.isReadOnly,
         isMuted: chat.isMuted,
+        deleted: false,
         muteExpiration: chat.muteExpiration,
         lastMessage: chat.lastMessage?.body || null,
         lastMessageTimestamp: chat.lastMessage?.timestamp || null,
@@ -279,6 +280,8 @@ export class WhatsappStorageService {
   }): Promise<WhatsAppChat[]> {
     try {
       const query: any = { sessionId };
+
+      console.log({options});
       
       if (options?.archived !== undefined) {
         query.archived = options.archived;
@@ -288,10 +291,12 @@ export class WhatsappStorageService {
         query.isGroup = options.isGroup;
       }
 
+      console.log({query});
+
       const chats = await this.whatsAppChatModel
         .find(query)
         .sort({ timestamp: -1 })
-        .limit(options?.limit || 100)
+        .limit(options?.limit || 500)
         .skip(options?.skip || 0)
         .exec();
 
