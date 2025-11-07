@@ -144,6 +144,17 @@ export class WhatsappWebService implements OnModuleInit {
         isDisconnected: false
       });
       
+      // Get all chats and save them to the database
+      try {
+        const chats = await client.getChats();
+        this.logger.log(`📋 Retrieved ${chats.length} chats from session ${sessionId}`);
+        await this.storageService.saveChats(sessionId, chats);
+        this.logger.log(`💾 Saved ${chats.length} chats to database for session ${sessionId}`);
+      } catch (error) {
+        this.logger.error(`Error fetching and saving chats for session ${sessionId}: ${error.message}`);
+        // Continue execution even if chat save fails
+      }
+      
       this.emitReadyEvent(sessionId);
     });
 
@@ -216,8 +227,6 @@ export class WhatsappWebService implements OnModuleInit {
         this.logger.error(`Error handling chat_removed: ${error.message}`);
       }
     });
-
-
 
     client.on('disconnected', async (reason) => {
       this.logger.warn(`⚠️ Session ${sessionId} disconnected: ${reason}`);

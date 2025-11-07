@@ -64,9 +64,9 @@ export class WhatsAppChat {
   @Prop({ default: false, index: true })
   deleted: boolean;
 
-  // Timestamp when the chat was deleted
-  @Prop({ type: Date, default: null })
-  deletedAt: Date;
+  // Array of timestamps when the chat was deleted (supports multiple deletions)
+  @Prop({ type: [Date], default: [] })
+  deletedAt: Date[];
 
   // Timestamps
   createdAt?: Date;

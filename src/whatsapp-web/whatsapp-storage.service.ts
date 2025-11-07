@@ -39,9 +39,13 @@ export class WhatsappStorageService {
       };
 
       // Use findOneAndUpdate with upsert to handle duplicates
+      // Preserve deletedAt array history, only initialize it for new chats
       await this.whatsAppChatModel.findOneAndUpdate(
         { chatId: chat.id._serialized, sessionId },
-        { $set: chatData },
+        { 
+          $set: chatData,
+          $setOnInsert: { deletedAt: [] }
+        },
         { upsert: true, new: true }
       );
 
@@ -76,6 +80,10 @@ export class WhatsappStorageService {
               lastMessage: chat.lastMessage?.body || null,
               lastMessageTimestamp: chat.lastMessage?.timestamp || null,
               lastMessageFromMe: chat.lastMessage?.fromMe || false,
+            },
+            $setOnInsert: {
+              deleted: false,
+              deletedAt: [],
             },
           },
           upsert: true,
@@ -328,17 +336,47 @@ export class WhatsappStorageService {
    */
   async markChatAsDeleted(sessionId: string, chatId: string): Promise<void> {
     try {
-      await this.whatsAppChatModel.updateOne(
-        { chatId, sessionId },
-        { 
-          $set: { 
-            deleted: true,
-            deletedAt: new Date(),
-          }
-        }
-      );
+      const deletionDate = new Date();
       
-      this.logger.debug(`🗑️ Chat marked as deleted: ${chatId} in session ${sessionId}`);
+      // First, find the document to check if deletedAt needs migration
+      const chat = await this.whatsAppChatModel.findOne({ chatId, sessionId });
+      
+      if (!chat) {
+        this.logger.warn(`Chat not found: ${chatId} in session ${sessionId}`);
+        return;
+      }
+
+      // Check if deletedAt is a Date (old format) and needs migration
+      const deletedAtValue = (chat as any).deletedAt;
+      const isDateType = deletedAtValue instanceof Date || (deletedAtValue && !Array.isArray(deletedAtValue));
+      
+      if (isDateType) {
+        // Migrate: convert Date to array with existing date and new date
+        await this.whatsAppChatModel.updateOne(
+          { chatId, sessionId },
+          { 
+            $set: { 
+              deleted: true,
+              deletedAt: [deletedAtValue, deletionDate]
+            }
+          }
+        );
+        this.logger.debug(`🗑️ Chat marked as deleted (migrated from Date): ${chatId} in session ${sessionId} at ${deletionDate.toISOString()}`);
+      } else {
+        // Normal case: push to array
+        await this.whatsAppChatModel.updateOne(
+          { chatId, sessionId },
+          { 
+            $set: { 
+              deleted: true,
+            },
+            $push: {
+              deletedAt: deletionDate,
+            }
+          }
+        );
+        this.logger.debug(`🗑️ Chat marked as deleted: ${chatId} in session ${sessionId} at ${deletionDate.toISOString()}`);
+      }
     } catch (error) {
       this.logger.error(`Error marking chat as deleted: ${error.message}`);
       throw error;
