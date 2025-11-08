@@ -20,7 +20,10 @@ export class WhatsappStorageService {
    */
   async saveChat(sessionId: string, chat: WAWebJS.Chat): Promise<void> {
     try {
-      const chatData = {
+      // Check if the last message type is "e2e_notification"
+      const isE2ENotification = chat.lastMessage?.type === 'e2e_notification';
+      
+      const chatData: any = {
         chatId: chat.id._serialized,
         sessionId,
         name: chat.name,
@@ -31,12 +34,16 @@ export class WhatsappStorageService {
         pinned: chat.pinned,
         isReadOnly: chat.isReadOnly,
         isMuted: chat.isMuted,
-        deleted: false,
         muteExpiration: chat.muteExpiration,
         lastMessage: chat.lastMessage?.body || null,
         lastMessageTimestamp: chat.lastMessage?.timestamp || null,
         lastMessageFromMe: chat.lastMessage?.fromMe || false,
       };
+
+      // Only set deleted: false if the message type is NOT "e2e_notification"
+      if (!isE2ENotification) {
+        chatData.deleted = false;
+      }
 
       // Use findOneAndUpdate with upsert to handle duplicates
       // Preserve deletedAt array history, only initialize it for new chats
@@ -61,34 +68,45 @@ export class WhatsappStorageService {
    */
   async saveChats(sessionId: string, chats: WAWebJS.Chat[]): Promise<void> {
     try {
-      const operations = chats.map(chat => ({
-        updateOne: {
-          filter: { chatId: chat.id._serialized, sessionId },
-          update: {
-            $set: {
-              chatId: chat.id._serialized,
-              sessionId,
-              name: chat.name,
-              isGroup: chat.isGroup,
-              unreadCount: chat.unreadCount,
-              timestamp: chat.timestamp,
-              archived: chat.archived,
-              pinned: chat.pinned,
-              isReadOnly: chat.isReadOnly,
-              isMuted: chat.isMuted,
-              muteExpiration: chat.muteExpiration,
-              lastMessage: chat.lastMessage?.body || null,
-              lastMessageTimestamp: chat.lastMessage?.timestamp || null,
-              lastMessageFromMe: chat.lastMessage?.fromMe || false,
+      const operations = chats.map(chat => {
+        // Check if the last message type is "e2e_notification"
+        const isE2ENotification = chat.lastMessage?.type === 'e2e_notification';
+        
+        const updateOperation: any = {
+          updateOne: {
+            filter: { chatId: chat.id._serialized, sessionId },
+            update: {
+              $set: {
+                chatId: chat.id._serialized,
+                sessionId,
+                name: chat.name,
+                isGroup: chat.isGroup,
+                unreadCount: chat.unreadCount,
+                timestamp: chat.timestamp,
+                archived: chat.archived,
+                pinned: chat.pinned,
+                isReadOnly: chat.isReadOnly,
+                isMuted: chat.isMuted,
+                muteExpiration: chat.muteExpiration,
+                lastMessage: chat.lastMessage?.body || null,
+                lastMessageTimestamp: chat.lastMessage?.timestamp || null,
+                lastMessageFromMe: chat.lastMessage?.fromMe || false,
+              },
+              $setOnInsert: {
+                deletedAt: [],
+              },
             },
-            $setOnInsert: {
-              deleted: false,
-              deletedAt: [],
-            },
+            upsert: true,
           },
-          upsert: true,
-        },
-      }));
+        };
+
+        // Only set deleted: false if the message type is NOT "e2e_notification"
+        if (!isE2ENotification) {
+          updateOperation.updateOne.update.$setOnInsert.deleted = false;
+        }
+
+        return updateOperation;
+      });
 
       if (operations.length > 0) {
         await this.whatsAppChatModel.bulkWrite(operations);
@@ -338,45 +356,24 @@ export class WhatsappStorageService {
     try {
       const deletionDate = new Date();
       
-      // First, find the document to check if deletedAt needs migration
       const chat = await this.whatsAppChatModel.findOne({ chatId, sessionId });
-      
       if (!chat) {
         this.logger.warn(`Chat not found: ${chatId} in session ${sessionId}`);
         return;
       }
-
-      // Check if deletedAt is a Date (old format) and needs migration
-      const deletedAtValue = (chat as any).deletedAt;
-      const isDateType = deletedAtValue instanceof Date || (deletedAtValue && !Array.isArray(deletedAtValue));
+      await this.whatsAppChatModel.updateOne(
+        { chatId, sessionId },
+        { 
+          $set: { 
+            deleted: true,
+          },
+          $push: {
+            deletedAt: deletionDate,
+          }
+        }
+      );
       
-      if (isDateType) {
-        // Migrate: convert Date to array with existing date and new date
-        await this.whatsAppChatModel.updateOne(
-          { chatId, sessionId },
-          { 
-            $set: { 
-              deleted: true,
-              deletedAt: [deletedAtValue, deletionDate]
-            }
-          }
-        );
-        this.logger.debug(`🗑️ Chat marked as deleted (migrated from Date): ${chatId} in session ${sessionId} at ${deletionDate.toISOString()}`);
-      } else {
-        // Normal case: push to array
-        await this.whatsAppChatModel.updateOne(
-          { chatId, sessionId },
-          { 
-            $set: { 
-              deleted: true,
-            },
-            $push: {
-              deletedAt: deletionDate,
-            }
-          }
-        );
-        this.logger.debug(`🗑️ Chat marked as deleted: ${chatId} in session ${sessionId} at ${deletionDate.toISOString()}`);
-      }
+      this.logger.debug(`🗑️ Chat marked as deleted: ${chatId} in session ${sessionId} at ${deletionDate.toISOString()}`);
     } catch (error) {
       this.logger.error(`Error marking chat as deleted: ${error.message}`);
       throw error;
