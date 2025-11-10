@@ -5,6 +5,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { WhatsappWebModule } from './whatsapp-web/whatsapp-web.module';
 import databaseConfig from './config/database.config';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { RabbitService } from './rabbit.service';
 
 @Module({
   imports: [
@@ -21,9 +23,20 @@ import databaseConfig from './config/database.config';
       },
       inject: [ConfigService],
     }),
+    ClientsModule.register([
+      {
+        name: 'RECORDS_AI_CHATS_ANALYSIS_SERVICE',
+        transport: Transport.RMQ,
+        options: {
+          urls: ['amqp://guest:guest@localhost:5672'],
+          queue: 'records_ai_chats_analysis_events', // where MS2 is listening
+          queueOptions: { durable: true },
+        },
+      },
+    ]),
     WhatsappWebModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, RabbitService],
 })
 export class AppModule {}
