@@ -80,4 +80,5 @@ WhatsAppChatSchema.index({ sessionId: 1, timestamp: -1 });
 WhatsAppChatSchema.index({ sessionId: 1, archived: 1 });
 WhatsAppChatSchema.index({ sessionId: 1, pinned: 1 });
 WhatsAppChatSchema.index({ sessionId: 1, deleted: 1 });
+WhatsAppChatSchema.index({ sessionId: 1, chatId: 1 }, {unique: true});
 

@@ -23,6 +23,7 @@ import { RabbitService } from './rabbit.service';
       },
       inject: [ConfigService],
     }),
+    
     ClientsModule.register([
       {
         name: 'RECORDS_AI_CHATS_ANALYSIS_SERVICE',

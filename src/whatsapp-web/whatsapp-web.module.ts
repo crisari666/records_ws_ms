@@ -9,6 +9,8 @@ import { WhatsappStorageService } from './whatsapp-storage.service';
 import { WhatsappWebGateway } from './whatsapp-web.gateway';
 import { WhatsAppAlert, WhatsAppAlertSchema } from './schemas/whatsapp-alert.schema';
 import { WhatsappAlertsService } from './whatsapp-alerts.service';
+import { RabbitService } from 'src/rabbit.service';
+import { ClientsModule, Transport } from '@nestjs/microservices';
 
 @Module({
   imports: [
@@ -20,9 +22,20 @@ import { WhatsappAlertsService } from './whatsapp-alerts.service';
         { name: WhatsAppAlert.name, schema: WhatsAppAlertSchema },
       ]
     ),
+    ClientsModule.register([
+      {
+        name: 'RECORDS_AI_CHATS_ANALYSIS_SERVICE',
+        transport: Transport.RMQ,
+        options: {
+          urls: ['amqp://guest:guest@localhost:5672'],
+          queue: 'records_ai_chats_analysis_events', // where MS2 is listening
+          queueOptions: { durable: true },
+        },
+      },
+    ]),
   ],
   controllers: [WhatsappWebController],
-  providers: [WhatsappWebService, WhatsappStorageService, WhatsappWebGateway, WhatsappAlertsService],
+  providers: [WhatsappWebService, WhatsappStorageService, WhatsappWebGateway, WhatsappAlertsService, RabbitService],
   exports: [WhatsappWebService, WhatsappStorageService, WhatsappAlertsService],
 })
 export class WhatsappWebModule {}

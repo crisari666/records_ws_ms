@@ -19,7 +19,7 @@ async function bootstrap() {
     transport: Transport.RMQ,
     options: {
       urls: ['amqp://guest:guest@localhost:5672'],
-      queue: 'whatsapp_events',
+      queue: 'whatsapp_events_queue',
       queueOptions: {
         durable: true, // 👈 asegura persistencia
       },

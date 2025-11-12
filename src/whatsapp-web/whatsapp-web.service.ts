@@ -14,6 +14,7 @@ import { WhatsappWebGateway } from './whatsapp-web.gateway';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { WhatsappAlertsService } from './whatsapp-alerts.service';
+import { RabbitService } from 'src/rabbit.service';
 
 @Injectable()
 export class WhatsappWebService implements OnModuleInit {
@@ -26,6 +27,7 @@ export class WhatsappWebService implements OnModuleInit {
     @InjectConnection() private readonly connection: Connection,
     @InjectModel(WhatsAppSession.name) private whatsAppSessionModel: mongoose.Model<WhatsAppSessionDocument>,
     @InjectModel(WhatsAppMessage.name) private whatsAppMessageModel: mongoose.Model<WhatsAppMessageDocument>,
+    private readonly rabbitService: RabbitService,
     private readonly configService: ConfigService,
     private readonly storageService: WhatsappStorageService,
     private readonly gateway: WhatsappWebGateway,
@@ -126,9 +128,6 @@ export class WhatsappWebService implements OnModuleInit {
         status: 'qr_generated', 
         lastSeen: new Date() 
       });
-
-
-      
       this.emitQrEvent(sessionId, qr);
     });
 
@@ -150,6 +149,11 @@ export class WhatsappWebService implements OnModuleInit {
         this.logger.log(`📋 Retrieved ${chats.length} chats from session ${sessionId}`);
         await this.storageService.saveChats(sessionId, chats);
         this.logger.log(`💾 Saved ${chats.length} chats to database for session ${sessionId}`);
+
+        this.rabbitService.emitToRecordsAiChatsAnalysisService('session_ready', {
+          sessionId: sessionId,
+          chats: chats.map(chat => chat.id._serialized)
+        });
       } catch (error) {
         this.logger.error(`Error fetching and saving chats for session ${sessionId}: ${error.message}`);
         // Continue execution even if chat save fails
@@ -213,7 +217,12 @@ export class WhatsappWebService implements OnModuleInit {
           isStarred: message.isStarred || false,
         };
         
-        this.emitNewMessageEvent(sessionId, messageData);
+        //this.emitNewMessageEvent(sessionId, messageData);
+
+        this.rabbitService.emitToRecordsAiChatsAnalysisService('message_create', {
+          sessionId: sessionId,
+          message: messageData
+        });
       } catch (error) {
         this.logger.error(`Error handling message_create: ${error.message}`);
       }
@@ -243,7 +252,7 @@ export class WhatsappWebService implements OnModuleInit {
       // Create a disconnection alert linked to the session's Mongo _id
       try {
         const sessionDoc = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
-        await this.whatsAppSessionModel.updateOne({ sessionId }, { $set: { isDisconnected: true, disconnectedAt: new Date() } });
+        await this.whatsAppSessionModel.updateOne({ sessionId }, { $set: { isDisconnected: true, closedAt: new Date() } });
         if (sessionDoc?._id) {
           await this.alertsService.createDisconnectedAlert(sessionDoc._id as mongoose.Types.ObjectId, `Session ${sessionId} disconnected: ${reason}`);
         }
@@ -908,6 +917,24 @@ export class WhatsappWebService implements OnModuleInit {
    */
   async getStoredChat(sessionId: string, chatId: string) {
     return this.storageService.getStoredChat(sessionId, chatId);
+  }
+
+  /**
+   * Send message to RabbitMQ for testing in ms2
+   */
+  async sendRMMessage(payload: any) {
+    try {
+      this.logger.log(`📤 Sending RM message to ms2: ${JSON.stringify(payload)}`);
+      this.rabbitService.emitToRecordsAiChatsAnalysisService('test_message', payload);
+      return { 
+        success: true, 
+        message: 'Message sent to RabbitMQ',
+        payload 
+      };
+    } catch (error) {
+      this.logger.error(`Error sending RM message: ${error.message}`);
+      throw new Error(`Failed to send RM message: ${error.message}`);
+    }
   }
 
   // Event emitter methods using WebSocket

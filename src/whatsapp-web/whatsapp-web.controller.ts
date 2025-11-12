@@ -23,6 +23,10 @@ export class WhatsappWebController {
     return this.whatsappWebService.getStoredSessions();
   }
 
+  @Post('send-rm-message')
+  async sendRMMessage(@Body() payload: any) {
+    return this.whatsappWebService.sendRMMessage(payload);
+  }
   @Post('send/:id')
   async sendMessage(
     @Param('id') id: string,
@@ -129,6 +133,5 @@ export class WhatsappWebController {
   ) {
     return this.whatsappWebService.getStoredChat(id, chatId);
   }
-  
 }
 
