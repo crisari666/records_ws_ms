@@ -46,12 +46,14 @@ export class WhatsappWebGateway implements OnGatewayConnection, OnGatewayDisconn
     return { success: true, room };
   }
 
+  
   private getSessionRoom(sessionId: string): string {
     return `session:${sessionId}`;
   }
 
   @SubscribeMessage('joinRoom') 
   handleJoinRoom(@ConnectedSocket() client: Socket, @MessageBody() sessionId: string) {
+    console.log('handleJoinRoom', sessionId);
     client.join(sessionId);
     this.logger.log(`Client ${client.id} joined room: ${sessionId}`);
   }

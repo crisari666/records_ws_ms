@@ -216,8 +216,7 @@ export class WhatsappWebService implements OnModuleInit {
           isForwarded: message.isForwarded || false,
           isStarred: message.isStarred || false,
         };
-        
-        //this.emitNewMessageEvent(sessionId, messageData);
+        this.emitNewMessageEvent(sessionId, messageData);
 
         this.rabbitService.emitToRecordsAiChatsAnalysisService('message_create', {
           sessionId: sessionId,
