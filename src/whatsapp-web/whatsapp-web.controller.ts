@@ -1,9 +1,9 @@
-import { Controller, Get, Post, Body,  Param, Delete, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, Query } from '@nestjs/common';
 import { WhatsappWebService } from './whatsapp-web.service';
 
 @Controller('whatsapp-web')
 export class WhatsappWebController {
-  constructor(private readonly whatsappWebService: WhatsappWebService) {}
+  constructor(private readonly whatsappWebService: WhatsappWebService) { }
 
   @Post('session/:id')
   async createSession(
@@ -40,6 +40,11 @@ export class WhatsappWebController {
     return this.whatsappWebService.destroySession(id);
   }
 
+  @Get('session/:id')
+  async getSession(@Param('id') id: string) {
+    return this.whatsappWebService.getSession(id);
+  }
+
   @Get('session/:id/status')
   getSessionStatus(@Param('id') id: string) {
     return this.whatsappWebService.getSessionStatus(id);
@@ -74,7 +79,7 @@ export class WhatsappWebController {
       skip: skip ? parseInt(skip as any) : undefined,
     });
   }
-  
+
 
   @Get('session/:id/messages/deleted')
   async getDeletedMessages(
