@@ -11,6 +11,7 @@ import { WhatsAppAlert, WhatsAppAlertSchema } from './schemas/whatsapp-alert.sch
 import { WhatsappAlertsService } from './whatsapp-alerts.service';
 import { RabbitService } from 'src/rabbit.service';
 import { ClientsModule, Transport } from '@nestjs/microservices';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
@@ -22,15 +23,25 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
         { name: WhatsAppAlert.name, schema: WhatsAppAlertSchema },
       ]
     ),
-    ClientsModule.register([
+    ClientsModule.registerAsync([
       {
         name: 'RECORDS_AI_CHATS_ANALYSIS_SERVICE',
-        transport: Transport.RMQ,
-        options: {
-          urls: ['amqp://guest:guest@localhost:5672'],
-          queue: 'records_ai_chats_analysis_events', // where MS2 is listening
-          queueOptions: { durable: true },
+        imports: [ConfigModule],
+        useFactory: (configService: ConfigService) => {
+          const rabbitMqUser = configService.get<string>('RABBIT_MQ_USER', 'guest');
+          const rabbitMqPass = configService.get<string>('RABBIT_MQ_PASS', 'guest');
+          const rabbitMqUrl = `amqp://${rabbitMqUser}:${rabbitMqPass}@localhost:5672`;
+
+          return {
+            transport: Transport.RMQ,
+            options: {
+              urls: [rabbitMqUrl],
+              queue: 'records_ai_chats_analysis_events', // where MS2 is listening
+              queueOptions: { durable: true },
+            },
+          };
         },
+        inject: [ConfigService],
       },
     ]),
   ],
@@ -38,5 +49,5 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
   providers: [WhatsappWebService, WhatsappStorageService, WhatsappWebGateway, WhatsappAlertsService, RabbitService],
   exports: [WhatsappWebService, WhatsappStorageService, WhatsappAlertsService],
 })
-export class WhatsappWebModule {}
+export class WhatsappWebModule { }
 
