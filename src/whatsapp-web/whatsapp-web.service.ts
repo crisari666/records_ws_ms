@@ -121,6 +121,13 @@ export class WhatsappWebService implements OnModuleInit {
    */
   private setupClientListeners(client: Client, sessionId: string) {
     client.on('qr', async (qr) => {
+      // Check if session is already ready to avoid emitting QR again
+      const session = this.sessions.get(sessionId);
+      if (session && session.isReady) {
+        this.logger.warn(`⚠️ Session ${sessionId} is already ready, ignoring QR event`);
+        return;
+      }
+
       this.logger.log(`📱 QR received for session ${sessionId}`);
       qrcode.generate(qr, { small: true, width: 100, height: 100 });
 
