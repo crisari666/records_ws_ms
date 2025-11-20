@@ -98,7 +98,7 @@ export class WhatsappWebService implements OnModuleInit {
   /**
    * Store session metadata in MongoDB
    */
-  private async storeSessionMetadata(sessionId: string, metadata: { status?: string; lastSeen?: Date; isDisconnected?: boolean; disconnectedAt?: Date; refId?: mongoose.Types.ObjectId; groupId?: mongoose.Types.ObjectId }) {
+  private async storeSessionMetadata(sessionId: string, metadata: { status?: string; lastSeen?: Date; isDisconnected?: boolean; disconnectedAt?: Date; refId?: mongoose.Types.ObjectId; groupId?: mongoose.Types.ObjectId, qrCode?: string }) {
     try {
       await this.whatsAppSessionModel.updateOne(
         { sessionId: sessionId },
@@ -126,7 +126,8 @@ export class WhatsappWebService implements OnModuleInit {
 
       await this.storeSessionMetadata(sessionId, {
         status: 'qr_generated',
-        lastSeen: new Date()
+        lastSeen: new Date(),
+        qrCode: qr
       });
       this.emitQrEvent(sessionId, qr);
     });
@@ -140,7 +141,8 @@ export class WhatsappWebService implements OnModuleInit {
       await this.storeSessionMetadata(sessionId, {
         status: 'ready',
         lastSeen: new Date(),
-        isDisconnected: false
+        isDisconnected: false,
+        qrCode: null
       });
 
       // Get all chats and save them to the database
@@ -552,6 +554,44 @@ export class WhatsappWebService implements OnModuleInit {
   async getSession(sessionId: string) {
     const session = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
     return session;
+  }
+
+  /**
+   * Get the QR code of a session by sessionId
+   */
+  async getSessionQrCode(sessionId: string) {
+    try {
+      const session = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
+
+      if (!session) {
+        return {
+          success: false,
+          message: 'Session not found',
+          qrCode: null
+        };
+      }
+
+      if (!session.qrCode) {
+        return {
+          success: false,
+          message: 'QR code not generated yet',
+          status: session.status,
+          qrCode: null
+        };
+      }
+
+      return {
+        success: true,
+        sessionId: session.sessionId,
+        status: session.status,
+        qrCode: session.qrCode,
+        qrAttempts: session.qrAttempts,
+        maxQrAttempts: session.maxQrAttempts
+      };
+    } catch (error) {
+      this.logger.error(`Error getting QR code for session ${sessionId}:`, error);
+      throw new Error(`Failed to get QR code: ${error.message}`);
+    }
   }
 
   /**

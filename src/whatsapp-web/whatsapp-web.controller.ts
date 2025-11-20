@@ -50,6 +50,11 @@ export class WhatsappWebController {
     return this.whatsappWebService.getSessionStatus(id);
   }
 
+  @Get('session/:id/qr-code')
+  async getSessionQrCode(@Param('id') id: string) {
+    return this.whatsappWebService.getSessionQrCode(id);
+  }
+
   @Get('session/:id/chats')
   async getChats(@Param('id') id: string) {
     return this.whatsappWebService.getChats(id);

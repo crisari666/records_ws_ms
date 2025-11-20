@@ -24,7 +24,7 @@ export class WhatsappWebGateway implements OnGatewayConnection, OnGatewayDisconn
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
-    
+
     // Allow clients to join rooms via query parameter or handshake auth
     const sessionId = client.handshake.query.sessionId as string;
     if (sessionId) {
@@ -46,12 +46,12 @@ export class WhatsappWebGateway implements OnGatewayConnection, OnGatewayDisconn
     return { success: true, room };
   }
 
-  
+
   private getSessionRoom(sessionId: string): string {
     return `session:${sessionId}`;
   }
 
-  @SubscribeMessage('joinRoom') 
+  @SubscribeMessage('joinRoom')
   handleJoinRoom(@ConnectedSocket() client: Socket, @MessageBody() sessionId: string) {
     console.log('handleJoinRoom', sessionId);
     client.join(sessionId);
@@ -61,8 +61,8 @@ export class WhatsappWebGateway implements OnGatewayConnection, OnGatewayDisconn
   emitQrCode(sessionId: string, qr: string) {
     const rooms = this.server.sockets.adapter.rooms
     const roomName = this.getSessionRoom(sessionId);
-    console.log('rooms', {rooms, roomName});
-    this.server.to(roomName).emit('qr', { sessionId, qr });
+    console.log('rooms', { rooms, roomName });
+    this.server.to(roomName).emit('qr', { sessionId, qr, roomName });
 
     this.logger.log(`QR code emitted for session ${sessionId}`);
   }
@@ -71,7 +71,6 @@ export class WhatsappWebGateway implements OnGatewayConnection, OnGatewayDisconn
     this.server.emit('ready', { sessionId });
     this.logger.log(`Ready event emitted for session ${sessionId}`);
   }
-
   emitAuthFailure(sessionId: string, error: any) {
     this.server.to(this.getSessionRoom(sessionId)).emit('auth_failure', { sessionId, error: error.message || error });
     this.logger.log(`Auth failure emitted for session ${sessionId}`);
@@ -82,7 +81,7 @@ export class WhatsappWebGateway implements OnGatewayConnection, OnGatewayDisconn
     this.logger.log(`Session closed emitted for session ${sessionId}${chatId ? `, chat ${chatId}` : ''}`);
   }
 
-  
+
   emitNewMessage(sessionId: string, messageData: any) {
     const room = this.getSessionRoom(sessionId);
     console.log('emitNewMessage', room)
