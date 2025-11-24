@@ -20,7 +20,7 @@ import { RabbitService } from 'src/rabbit.service';
 export class WhatsappWebService implements OnModuleInit {
   private readonly logger = new Logger(WhatsappWebService.name);
   private readonly sessionPath = path.join(process.cwd(), '.wwebjs_auth');
-  private sessions: Map<string, { client: Client; isReady: boolean; lastRestore?: Date }> = new Map();
+  private sessions: Map<string, { client: Client; isReady: boolean; lastRestore?: Date; isRestoring?: boolean }> = new Map();
   private isInitializing = false;
 
   constructor(
@@ -80,7 +80,7 @@ export class WhatsappWebService implements OnModuleInit {
 
         try {
           this.logger.log(`🔄 Attempting to restore session: ${sessionId}`);
-          await this.createSession(sessionId);
+          await this.createSession(sessionId, { isRestoring: true });
           this.logger.log(`✅ Session ${sessionId} restored successfully`);
         } catch (error) {
           this.logger.error(`❌ Failed to restore session ${sessionId}:`, error.message);
@@ -152,24 +152,31 @@ export class WhatsappWebService implements OnModuleInit {
         qrCode: null
       });
 
+      // Only synchronize chats and messages for new sessions, not restored ones
+      const isRestoring = session?.isRestoring || false;
 
+      if (!isRestoring) {
+        // Synchronize chats and messages with progress events
+        try {
+          this.logger.log(`🔄 Starting chat synchronization for session ${sessionId}`);
+          const result = await this.syncChatsWithProgress(sessionId);
+          this.logger.log(`✅ Chat synchronization completed for session ${sessionId}: ${result.chatsProcessed} chats`);
 
-      // Synchronize chats and messages with progress events
-      try {
-        this.logger.log(`� Starting chat synchronization for session ${sessionId}`);
-        const result = await this.syncChatsWithProgress(sessionId);
-        this.logger.log(`✅ Chat synchronization completed for session ${sessionId}: ${result.chatsProcessed} chats`);
-
-        // Emit to RabbitMQ after synchronization is complete
-        const storedChats = await this.storageService.getStoredChats(sessionId);
-        this.rabbitService.emitToRecordsAiChatsAnalysisService('session_ready', {
-          sessionId: sessionId,
-          chats: storedChats.map(chat => chat.chatId)
-        });
+          // Emit to RabbitMQ after synchronization is complete
+          const storedChats = await this.storageService.getStoredChats(sessionId);
+          this.rabbitService.emitToRecordsAiChatsAnalysisService('session_ready', {
+            sessionId: sessionId,
+            chats: storedChats.map(chat => chat.chatId)
+          });
+          this.emitReadyEvent(sessionId);
+        } catch (error) {
+          this.logger.error(`Error synchronizing chats for session ${sessionId}: ${error.message}`);
+          // Continue execution even if sync fails
+        }
+      } else {
+        this.logger.log(`⏭️ Skipping chat synchronization for restored session ${sessionId}`);
+        // Still emit ready event for restored sessions
         this.emitReadyEvent(sessionId);
-      } catch (error) {
-        this.logger.error(`Error synchronizing chats for session ${sessionId}: ${error.message}`);
-        // Continue execution even if sync fails
       }
     });
 
@@ -352,7 +359,7 @@ export class WhatsappWebService implements OnModuleInit {
   /**
    * Create a new WhatsApp session
    */
-  async createSession(sessionId: string, options?: { groupId?: string }, retryCount: number = 0) {
+  async createSession(sessionId: string, options?: { groupId?: string; isRestoring?: boolean }, retryCount: number = 0) {
     try {
       console.log('createSession or restore session', sessionId);
 
@@ -449,7 +456,8 @@ export class WhatsappWebService implements OnModuleInit {
       this.sessions.set(sessionId, {
         client,
         isReady: false,
-        lastRestore: new Date()
+        lastRestore: new Date(),
+        isRestoring: options?.isRestoring || false
       });
 
       return { success: true, sessionId, message: 'Session created successfully' };
