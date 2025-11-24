@@ -90,5 +90,11 @@ export class WhatsappWebGateway implements OnGatewayConnection, OnGatewayDisconn
     this.server.to(room).emit('new_message', { sessionId, message: messageData });
     this.logger.log(`New message emitted to room ${room} for session ${sessionId}`);
   }
+
+  emitSyncChats(sessionId: string, payload: { nChats: number; currentChat: number; chatId?: string; messagesSynced?: number }) {
+    const room = this.getSessionRoom(sessionId);
+    this.server.to(room).emit('sync_chats', { sessionId, ...payload });
+    this.logger.log(`Sync chats progress emitted for session ${sessionId}: ${payload.currentChat}/${payload.nChats}`);
+  }
 }
 

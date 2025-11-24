@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Body, Param, Delete, Query } from '@nestjs/common';
 import { WhatsappWebService } from './whatsapp-web.service';
+import { EventPattern, Payload } from '@nestjs/microservices';
 
 @Controller('whatsapp-web')
 export class WhatsappWebController {
@@ -58,6 +59,17 @@ export class WhatsappWebController {
   @Get('session/:id/chats')
   async getChats(@Param('id') id: string) {
     return this.whatsappWebService.getChats(id);
+  }
+
+  @Post('session/:id/sync-chats')
+  async syncChatsWithProgress(
+    @Param('id') id: string,
+    @Query('limitPerChat') limitPerChat?: number,
+  ) {
+    return this.whatsappWebService.syncChatsWithProgress(
+      id,
+      limitPerChat ? parseInt(limitPerChat as any) : 100
+    );
   }
 
   @Get('session/:id/chats/:chatId/messages')
@@ -143,5 +155,11 @@ export class WhatsappWebController {
   ) {
     return this.whatsappWebService.getStoredChat(id, chatId);
   }
+
+  @EventPattern('remove_session')
+  async handleIncoming(@Payload() data: any) {
+    this.whatsappWebService.destroySession(data);
+  }
+
 }
 

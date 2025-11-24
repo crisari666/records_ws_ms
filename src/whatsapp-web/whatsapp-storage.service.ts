@@ -12,7 +12,7 @@ export class WhatsappStorageService {
   constructor(
     @InjectModel(WhatsAppChat.name) private whatsAppChatModel: Model<WhatsAppChatDocument>,
     @InjectModel(WhatsAppMessage.name) private whatsAppMessageModel: Model<WhatsAppMessageDocument>,
-  ) {}
+  ) { }
 
   /**
    * Save or update a chat in the database
@@ -22,7 +22,7 @@ export class WhatsappStorageService {
     try {
       // Check if the last message type is "e2e_notification"
       const isE2ENotification = chat.lastMessage?.type === 'e2e_notification';
-      
+
       const chatData: any = {
         chatId: chat.id._serialized,
         sessionId,
@@ -49,7 +49,7 @@ export class WhatsappStorageService {
       // Preserve deletedAt array history, only initialize it for new chats
       await this.whatsAppChatModel.findOneAndUpdate(
         { chatId: chat.id._serialized, sessionId },
-        { 
+        {
           $set: chatData,
           $setOnInsert: { deletedAt: [] }
         },
@@ -66,54 +66,61 @@ export class WhatsappStorageService {
   /**
    * Save multiple chats (batch operation)
    */
-  async saveChats(sessionId: string, chats: WAWebJS.Chat[]): Promise<void> {
+  async saveChats(
+    sessionId: string,
+    chats: WAWebJS.Chat[],
+    onProgress?: (currentIndex: number, total: number, chat: WAWebJS.Chat) => void | Promise<void>
+  ): Promise<void> {
     try {
-      const operations = chats.map(chat => {
+      const total = chats.length;
+
+      // Process chats one by one to allow progress callbacks
+      for (let i = 0; i < chats.length; i++) {
+        const chat = chats[i];
+
         // Check if the last message type is "e2e_notification"
         const isE2ENotification = chat.lastMessage?.type === 'e2e_notification';
-        
-        const updateOperation: any = {
-          updateOne: {
-            filter: { chatId: chat.id._serialized, sessionId },
-            update: {
-              $set: {
-                chatId: chat.id._serialized,
-                sessionId,
-                name: chat.name,
-                isGroup: chat.isGroup,
-                unreadCount: chat.unreadCount,
-                timestamp: chat.timestamp,
-                archived: chat.archived,
-                pinned: chat.pinned,
-                isReadOnly: chat.isReadOnly,
-                isMuted: chat.isMuted,
-                muteExpiration: chat.muteExpiration,
-                lastMessage: chat.lastMessage?.body || null,
-                lastMessageTimestamp: chat.lastMessage?.timestamp || null,
-                lastMessageFromMe: chat.lastMessage?.fromMe || false,
-              },
-              $setOnInsert: {
-                deletedAt: [],
-              },
-            },
-            upsert: true,
-          },
+
+        const chatData: any = {
+          chatId: chat.id._serialized,
+          sessionId,
+          name: chat.name,
+          isGroup: chat.isGroup,
+          unreadCount: chat.unreadCount,
+          timestamp: chat.timestamp,
+          archived: chat.archived,
+          pinned: chat.pinned,
+          isReadOnly: chat.isReadOnly,
+          isMuted: chat.isMuted,
+          muteExpiration: chat.muteExpiration,
+          lastMessage: chat.lastMessage?.body || null,
+          lastMessageTimestamp: chat.lastMessage?.timestamp || null,
+          lastMessageFromMe: chat.lastMessage?.fromMe || false,
         };
 
         // Only set deleted: false if the message type is NOT "e2e_notification"
         if (!isE2ENotification) {
-          updateOperation.updateOne.update.$setOnInsert.deleted = false;
+          chatData.deleted = false;
         }
 
-        return updateOperation;
-      });
+        await this.whatsAppChatModel.findOneAndUpdate(
+          { chatId: chat.id._serialized, sessionId },
+          {
+            $set: chatData,
+            $setOnInsert: { deletedAt: [] }
+          },
+          { upsert: true, new: true }
+        );
 
-      if (operations.length > 0) {
-        await this.whatsAppChatModel.bulkWrite(operations);
-        this.logger.log(`💾 Batch saved ${chats.length} chats for session ${sessionId}`);
+        // Call progress callback if provided
+        if (onProgress) {
+          await onProgress(i + 1, total, chat);
+        }
       }
+
+      this.logger.log(`💾 Saved ${chats.length} chats for session ${sessionId}`);
     } catch (error) {
-      this.logger.error(`Error batch saving chats: ${error.message}`);
+      this.logger.error(`Error saving chats: ${error.message}`);
       throw error;
     }
   }
@@ -182,7 +189,12 @@ export class WhatsappStorageService {
   /**
    * Batch save messages (more efficient for bulk operations)
    */
-  async saveMessages(sessionId: string, messages: WAWebJS.Message[], chatId?: string): Promise<void> {
+  async saveMessages(
+    sessionId: string,
+    messages: WAWebJS.Message[],
+    chatId?: string,
+    onProgress?: (messagesSaved: number) => void | Promise<void>
+  ): Promise<void> {
     try {
       if (messages.length === 0) {
         return;
@@ -191,12 +203,12 @@ export class WhatsappStorageService {
       const operations = messages.map(message => {
         // Use provided chatId or fallback to message context
         const messageChatId = chatId || message.from || message.to;
-        
+
         return {
           updateOne: {
-            filter: { 
+            filter: {
               messageId: message.id._serialized,
-              sessionId 
+              sessionId
             },
             update: {
               $set: {
@@ -238,6 +250,11 @@ export class WhatsappStorageService {
 
       await this.whatsAppMessageModel.bulkWrite(operations);
       this.logger.log(`💾 Batch saved ${messages.length} messages for session ${sessionId}`);
+
+      // Call progress callback if provided
+      if (onProgress) {
+        await onProgress(messages.length);
+      }
     } catch (error) {
       this.logger.error(`Error batch saving messages: ${error.message}`);
       throw error;
@@ -251,15 +268,15 @@ export class WhatsappStorageService {
     try {
       await this.whatsAppMessageModel.updateOne(
         { messageId, sessionId },
-        { 
-          $set: { 
+        {
+          $set: {
             isDeleted: true,
             deletedAt: new Date(),
             deletedBy,
           }
         }
       );
-      
+
       this.logger.debug(`🗑️ Message marked as deleted: ${messageId} by ${deletedBy}`);
     } catch (error) {
       this.logger.error(`Error marking message as deleted: ${error.message}`);
@@ -271,9 +288,9 @@ export class WhatsappStorageService {
    */
   async updateMessageEdition(sessionId: string, message: WAWebJS.Message, newBody: string, prevBody: string): Promise<void> {
     try {
-      const existingMessage = await this.whatsAppMessageModel.findOne({ 
+      const existingMessage = await this.whatsAppMessageModel.findOne({
         messageId: message.id._serialized,
-        sessionId 
+        sessionId
       });
 
       const editionHistory = existingMessage?.edition || [];
@@ -281,14 +298,14 @@ export class WhatsappStorageService {
 
       await this.whatsAppMessageModel.updateOne(
         { messageId: message.id._serialized, sessionId },
-        { 
-          $set: { 
+        {
+          $set: {
             body: newBody,
             edition: editionHistory,
           }
         }
       );
-      
+
       this.logger.debug(`✏️ Message edition saved: ${message.id._serialized}`);
     } catch (error) {
       this.logger.error(`Error updating message edition: ${error.message}`);
@@ -307,17 +324,17 @@ export class WhatsappStorageService {
     try {
       const query: any = { sessionId };
 
-      console.log({options});
-      
+      console.log({ options });
+
       if (options?.archived !== undefined) {
         query.archived = options.archived;
       }
-      
+
       if (options?.isGroup !== undefined) {
         query.isGroup = options.isGroup;
       }
 
-      console.log({query});
+      console.log({ query });
 
       const chats = await this.whatsAppChatModel
         .find(query)
@@ -355,7 +372,7 @@ export class WhatsappStorageService {
   async markChatAsDeleted(sessionId: string, chatId: string): Promise<void> {
     try {
       const deletionDate = new Date();
-      
+
       const chat = await this.whatsAppChatModel.findOne({ chatId, sessionId });
       if (!chat) {
         this.logger.warn(`Chat not found: ${chatId} in session ${sessionId}`);
@@ -363,8 +380,8 @@ export class WhatsappStorageService {
       }
       await this.whatsAppChatModel.updateOne(
         { chatId, sessionId },
-        { 
-          $set: { 
+        {
+          $set: {
             deleted: true,
           },
           $push: {
@@ -372,7 +389,7 @@ export class WhatsappStorageService {
           }
         }
       );
-      
+
       this.logger.debug(`🗑️ Chat marked as deleted: ${chatId} in session ${sessionId} at ${deletionDate.toISOString()}`);
     } catch (error) {
       this.logger.error(`Error marking chat as deleted: ${error.message}`);
@@ -392,33 +409,33 @@ export class WhatsappStorageService {
   }): Promise<WhatsAppMessage[]> {
     try {
       const query: any = { sessionId };
-      
+
       if (chatId) {
         query.chatId = chatId;
       }
-      
+
       if (!options?.includeDeleted) {
         query.isDeleted = false;
       }
-      
+
       if (options?.startTimestamp) {
         query.timestamp = { $gte: options.startTimestamp };
       }
-      
+
       if (options?.endTimestamp) {
         if (!query.timestamp) {
           query.timestamp = {};
         }
         query.timestamp.$lte = options.endTimestamp;
       }
-      
+
       const messages = await this.whatsAppMessageModel
         .find(query)
         .sort({ timestamp: -1 })
         .limit(options?.limit || 50)
         .skip(options?.skip || 0)
         .exec();
-      
+
       return messages;
     } catch (error) {
       this.logger.error(`Error getting stored messages: ${error.message}`);

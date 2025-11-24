@@ -152,23 +152,25 @@ export class WhatsappWebService implements OnModuleInit {
         qrCode: null
       });
 
-      // Get all chats and save them to the database
-      try {
-        const chats = await client.getChats();
-        this.logger.log(`📋 Retrieved ${chats.length} chats from session ${sessionId}`);
-        await this.storageService.saveChats(sessionId, chats);
-        this.logger.log(`💾 Saved ${chats.length} chats to database for session ${sessionId}`);
 
+
+      // Synchronize chats and messages with progress events
+      try {
+        this.logger.log(`� Starting chat synchronization for session ${sessionId}`);
+        const result = await this.syncChatsWithProgress(sessionId);
+        this.logger.log(`✅ Chat synchronization completed for session ${sessionId}: ${result.chatsProcessed} chats`);
+
+        // Emit to RabbitMQ after synchronization is complete
+        const storedChats = await this.storageService.getStoredChats(sessionId);
         this.rabbitService.emitToRecordsAiChatsAnalysisService('session_ready', {
           sessionId: sessionId,
-          chats: chats.map(chat => chat.id._serialized)
+          chats: storedChats.map(chat => chat.chatId)
         });
+        this.emitReadyEvent(sessionId);
       } catch (error) {
-        this.logger.error(`Error fetching and saving chats for session ${sessionId}: ${error.message}`);
-        // Continue execution even if chat save fails
+        this.logger.error(`Error synchronizing chats for session ${sessionId}: ${error.message}`);
+        // Continue execution even if sync fails
       }
-
-      this.emitReadyEvent(sessionId);
     });
 
     client.on('authenticated', async () => {
@@ -359,15 +361,15 @@ export class WhatsappWebService implements OnModuleInit {
 
       //console.log({ existingSession });
 
+      const storedSession = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
 
-      if (existingSession && existingSession.isReady) {
+      if (existingSession && existingSession.isReady && storedSession && (storedSession.status === 'ready' || storedSession.status === 'authenticated')) {
         this.logger.warn(`Session ${sessionId} already exists and is ready`);
-        return { success: false, sessionId, message: 'Session already exists and is authenticated' };
+        return { success: false, sessionId, message: 'Session already exists and is authenyticated' };
       }
 
 
       // Check database for stored session with authenticated/ready status
-      const storedSession = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
       if (storedSession && (storedSession.status === 'ready' || storedSession.status === 'authenticated')) {
         // If there's a stored authenticated session but not in memory, try to restore it
         if (!existingSession) {
@@ -644,33 +646,16 @@ export class WhatsappWebService implements OnModuleInit {
   }
 
   /**
-   * Get chats for a session and save them to database
+   * Get chats for a session from database
+   * Synchronization happens automatically when session becomes ready
    */
   async getChats(sessionId: string) {
     try {
-      const session = this.sessions.get(sessionId);
-      if (!session) {
-        throw new Error(`Session ${sessionId} not found`);
-      }
+      // Fetch and return the stored chats from database
+      const storedChats = await this.storageService.getStoredChats(sessionId);
 
-      if (!session.isReady) {
-        throw new Error(`Session ${sessionId} is not ready yet`);
-      }
-
-      const chats = await session.client.getChats();
-
-      this.logger.log(`📋 Retrieved ${chats.length} chats from session ${sessionId}`);
-
-      // Save chats to database using storage service
-      try {
-        await this.storageService.saveChats(sessionId, chats);
-        this.logger.log(`💾 Saved ${chats.length} chats to database for session ${sessionId}`);
-      } catch (error) {
-        this.logger.error(`Error saving chats to database: ${error.message}`);
-      }
-
-      return chats.map(chat => ({
-        id: chat.id._serialized,
+      return storedChats.map(chat => ({
+        id: chat.chatId,
         name: chat.name,
         isGroup: chat.isGroup,
         unreadCount: chat.unreadCount,
@@ -681,10 +666,6 @@ export class WhatsappWebService implements OnModuleInit {
       }));
     } catch (error) {
       this.logger.error(`Error getting chats from session ${sessionId}:`, error);
-      if (error?.message && /Session closed/i.test(error.message)) {
-        await this.handleSessionClosed(sessionId);
-      }
-
       throw new Error(`Failed to get chats: ${error.message}`);
     }
   }
@@ -797,6 +778,118 @@ export class WhatsappWebService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`Error syncing recent messages for session ${sessionId}:`, error);
       throw new Error(`Failed to sync recent messages: ${error.message}`);
+    }
+  }
+
+  /**
+   * Synchronize chats and messages with WebSocket progress events
+   * This method orchestrates the entire synchronization process and emits events to the frontend
+   * Each chat is saved individually and all its messages are synced before moving to the next chat
+   */
+  async syncChatsWithProgress(sessionId: string, limitPerChat: number = 100) {
+    try {
+      const session = this.sessions.get(sessionId);
+      if (!session) {
+        throw new Error(`Session ${sessionId} not found`);
+      }
+
+      if (!session.isReady) {
+        throw new Error(`Session ${sessionId} is not ready yet`);
+      }
+
+      // Step 1: Get all chats from WhatsApp
+      this.logger.log(`📋 Fetching chats for session ${sessionId}`);
+      const chats = await session.client.getChats();
+      const nChats = chats.length;
+
+      this.logger.log(`📋 Retrieved ${nChats} chats from session ${sessionId}`);
+
+      // Step 2: Emit initial sync event with total chat count
+      this.gateway.emitSyncChats(sessionId, {
+        nChats,
+        currentChat: 0,
+        messagesSynced: 0,
+      });
+
+      // Step 3: Process each chat sequentially - save chat then sync all its messages
+      for (let i = 0; i < chats.length; i++) {
+        const chat = chats[i];
+        const chatId = chat.id._serialized;
+
+        try {
+          this.logger.log(`📋 Processing chat ${i + 1}/${nChats}: ${chatId}`);
+
+          // Save the current chat to database
+          await this.storageService.saveChats(sessionId, [chat], async (currentIndex, total, savedChat) => {
+            // Emit progress after chat is saved
+            this.gateway.emitSyncChats(sessionId, {
+              nChats,
+              currentChat: i + 1,
+              chatId: savedChat.id._serialized,
+              messagesSynced: 0,
+            });
+          });
+
+          this.logger.log(`💾 Saved chat ${i + 1}/${nChats}: ${chatId}`);
+
+          // Fetch messages from WhatsApp for this chat
+          this.logger.log(`📨 Fetching messages for chat ${i + 1}/${nChats}: ${chatId}`);
+
+          const chatInstance = await session.client.getChatById(chatId);
+          const messages = await chat.fetchMessages({ limit: 50 })
+
+          if (messages.length > 0) {
+            // Save messages to database with progress callback
+            await this.storageService.saveMessages(
+              sessionId,
+              messages,
+              chatId,
+              async (messagesSaved) => {
+                // Emit progress after messages are saved
+                this.gateway.emitSyncChats(sessionId, {
+                  nChats,
+                  currentChat: i + 1,
+                  chatId,
+                  messagesSynced: messagesSaved,
+                });
+              }
+            );
+
+            this.logger.log(`💾 Synced ${messages.length} messages for chat ${chatId}`);
+          } else {
+            // Emit progress even if no messages
+            this.gateway.emitSyncChats(sessionId, {
+              nChats,
+              currentChat: i + 1,
+              chatId,
+              messagesSynced: 0,
+            });
+            this.logger.log(`📭 No messages to sync for chat ${chatId}`);
+          }
+
+          this.logger.log(`✅ Completed synchronization for chat ${i + 1}/${nChats}: ${chatId}`);
+        } catch (innerError) {
+          this.logger.error(`Error syncing chat ${chatId}: ${innerError.message}`);
+          // Emit error progress but continue with next chat
+          this.gateway.emitSyncChats(sessionId, {
+            nChats,
+            currentChat: i + 1,
+            chatId,
+            messagesSynced: 0,
+          });
+        }
+      }
+
+      this.logger.log(`✅ Synchronization completed for session ${sessionId}`);
+
+      return {
+        success: true,
+        chatsProcessed: nChats,
+        message: 'Synchronization completed successfully',
+      };
+    } catch (error) {
+      this.logger.error(`Error synchronizing chats with progress for session ${sessionId}:`, error);
+      throw new Error(`Failed to synchronize chats: ${error.message}`);
     }
   }
 
