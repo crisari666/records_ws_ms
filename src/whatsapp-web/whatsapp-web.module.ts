@@ -7,7 +7,6 @@ import { WhatsAppMessage, WhatsAppMessageSchema } from './schemas/whatsapp-messa
 import { WhatsAppChat, WhatsAppChatSchema } from './schemas/whatsapp-chat.schema';
 import { WhatsappStorageService } from './whatsapp-storage.service';
 import { WhatsappWebGateway } from './whatsapp-web.gateway';
-import { WhatsAppAlert, WhatsAppAlertSchema } from './schemas/whatsapp-alert.schema';
 import { WhatsappAlertsService } from './whatsapp-alerts.service';
 import { RabbitService } from 'src/rabbit.service';
 import { ClientsModule, Transport } from '@nestjs/microservices';
@@ -20,7 +19,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
         { name: WhatsAppSession.name, schema: WhatsAppSessionSchema },
         { name: WhatsAppMessage.name, schema: WhatsAppMessageSchema },
         { name: WhatsAppChat.name, schema: WhatsAppChatSchema },
-        { name: WhatsAppAlert.name, schema: WhatsAppAlertSchema },
       ]
     ),
     ClientsModule.registerAsync([

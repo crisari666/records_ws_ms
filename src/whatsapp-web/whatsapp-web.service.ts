@@ -98,7 +98,7 @@ export class WhatsappWebService implements OnModuleInit {
   /**
    * Store session metadata in MongoDB
    */
-  private async storeSessionMetadata(sessionId: string, metadata: { status?: string; lastSeen?: Date; isDisconnected?: boolean; disconnectedAt?: Date; refId?: mongoose.Types.ObjectId; groupId?: mongoose.Types.ObjectId, qrCode?: string }) {
+  private async storeSessionMetadata(sessionId: string, metadata: { status?: string; lastSeen?: Date; isDisconnected?: boolean; disconnectedAt?: Date; refId?: mongoose.Types.ObjectId; groupId?: mongoose.Types.ObjectId, qrCode?: string; title?: string }) {
     try {
       await this.whatsAppSessionModel.updateOne(
         { sessionId: sessionId },
@@ -457,7 +457,7 @@ export class WhatsappWebService implements OnModuleInit {
   /**
    * Create a new WhatsApp session
    */
-  async createSession(sessionId: string, options?: { groupId?: string; isRestoring?: boolean }, retryCount: number = 0) {
+  async createSession(sessionId: string, options?: { groupId?: string; isRestoring?: boolean; title?: string }, retryCount: number = 0) {
     try {
       console.log('createSession or restore session', sessionId);
 
@@ -500,7 +500,7 @@ export class WhatsappWebService implements OnModuleInit {
 
       this.logger.log(`🔨 Creating session: ${sessionId}`);
 
-      // Store session metadata (optionally include groupId mapped to refId)
+      // Store session metadata (optionally include groupId mapped to refId and title)
       let refObjectId: mongoose.Types.ObjectId | undefined;
       if (options?.groupId && mongoose.Types.ObjectId.isValid(options.groupId)) {
         refObjectId = new mongoose.Types.ObjectId(options.groupId);
@@ -509,6 +509,7 @@ export class WhatsappWebService implements OnModuleInit {
         status: 'initializing',
         lastSeen: new Date(),
         ...(refObjectId ? { refId: refObjectId } : {}),
+        ...(options?.title ? { title: options.title } : {}),
       });
 
       // Puppeteer options
@@ -731,6 +732,7 @@ export class WhatsappWebService implements OnModuleInit {
     try {
       const sessions = await this.whatsAppSessionModel.find({}).exec();
       return sessions.map(session => ({
+        _id: session._id,
         sessionId: session.sessionId,
         status: session.status,
         lastSeen: session.lastSeen,

@@ -10,6 +10,10 @@ export class WhatsAppSession {
   @Prop({ required: true, unique: true })
   sessionId: string;
 
+  // Optional title or name for the session
+  @Prop({ type: String, required: false })
+  title?: string;
+
   // Optional external reference for filtering/grouping (indexed)
   @Prop({ type: Types.ObjectId, required: false, index: true })
   refId?: Types.ObjectId;

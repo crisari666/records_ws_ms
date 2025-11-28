@@ -9,7 +9,7 @@ export class WhatsappWebController {
   @Post('session/:id')
   async createSession(
     @Param('id') id: string,
-    @Body() body?: { groupId?: string },
+    @Body() body?: { groupId?: string; title?: string },
   ) {
     return this.whatsappWebService.createSession(id, body);
   }
