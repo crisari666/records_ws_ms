@@ -12,10 +12,11 @@ export class WhatsappAlertsService {
     private readonly alertModel: Model<WhatsAppAlertDocument>,
   ) {}
 
-  async createDisconnectedAlert(sessionObjectId: Types.ObjectId, message?: string) {
+  async createDisconnectedAlert(sessionObjectId: Types.ObjectId, sessionId: string, message?: string) {
     try {
       const alert = await this.alertModel.create({
         session: sessionObjectId,
+        sessionId,
         type: 'disconnected',
         message: message ?? 'WhatsApp session disconnected',
         isRead: false,
@@ -38,6 +39,82 @@ export class WhatsappAlertsService {
 
   async listSessionAlerts(sessionObjectId: Types.ObjectId) {
     return this.alertModel.find({ session: sessionObjectId }).sort({ createdAt: -1 }).exec();
+  }
+
+  async createMessageDeletedAlert(
+    sessionObjectId: Types.ObjectId,
+    sessionId: string,
+    messageId: string,
+    chatId: string,
+    timestamp?: number,
+    message?: string,
+  ) {
+    try {
+      const alert = await this.alertModel.create({
+        session: sessionObjectId,
+        sessionId,
+        type: 'message_deleted',
+        messageId,
+        chatId,
+        timestamp: timestamp || Date.now(),
+        message: message || `--`,
+        isRead: false,
+      });
+      return alert;
+    } catch (error) {
+      this.logger.error('Failed to create message deleted alert', error as Error);
+      throw error;
+    }
+  }
+
+  async createMessageEditedAlert(
+    sessionObjectId: Types.ObjectId,
+    sessionId: string,
+    messageId: string,
+    chatId: string,
+    timestamp?: number,
+    message?: string,
+  ) {
+    try {
+      const alert = await this.alertModel.create({
+        session: sessionObjectId,
+        sessionId,
+        type: 'message_edited',
+        messageId,
+        chatId,
+        timestamp: timestamp || Date.now(),
+        message: message || `Message edited: ${messageId}`,
+        isRead: false,
+      });
+      return alert;
+    } catch (error) {
+      this.logger.error('Failed to create message edited alert', error as Error);
+      throw error;
+    }
+  }
+
+  async createChatRemovedAlert(
+    sessionObjectId: Types.ObjectId,
+    sessionId: string,
+    chatId: string,
+    timestamp?: number,
+    message?: string,
+  ) {
+    try {
+      const alert = await this.alertModel.create({
+        session: sessionObjectId,
+        sessionId,
+        type: 'chat_removed',
+        chatId,
+        timestamp: timestamp || Date.now(),
+        message: message || `Chat removed: ${chatId}`,
+        isRead: false,
+      });
+      return alert;
+    } catch (error) {
+      this.logger.error('Failed to create chat removed alert', error as Error);
+      throw error;
+    }
   }
 }
 

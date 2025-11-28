@@ -130,7 +130,7 @@ export class WhatsappStorageService {
    */
   async saveMessage(sessionId: string, message: WAWebJS.Message, chatId?: string): Promise<void> {
     try {
-      // Use provided chatId or fallback to message context
+
       const messageChatId = chatId || message.id.remote
       const messageData = {
         messageId: message.id._serialized,
@@ -153,27 +153,29 @@ export class WhatsappStorageService {
         isEphemeral: message.isEphemeral || false,
         timestamp: message.timestamp,
         ack: message.ack || 0,
-        isDeleted: false,
         deletedAt: null,
         deletedBy: null,
         edition: [],
         deviceType: message.deviceType,
         broadcast: message.broadcast || false,
         mentionedIds: message.mentionedIds || [],
-        rawData: message.rawData || {},
+        rawData: message.rawData!,
       };
 
-      // Check if message already exists
       const existingMessage = await this.whatsAppMessageModel.findOne({
         messageId: message.id._serialized,
         sessionId
       });
-
       if (!existingMessage) {
-        const newMessage = await this.whatsAppMessageModel.create(messageData);
-        // console.log('newMessage', newMessage);
+        const newMessage = await this.whatsAppMessageModel.create({...messageData, isDeleted: false});
         this.logger.debug(`💾 Message saved: ${newMessage.chatId}`);
-      } else {
+      } 
+      else {
+        
+        console.log('existingMessage', {existingMessage});
+        if (existingMessage.isDeleted) {
+          return;
+        }
         // Update only if message data has changed
         await this.whatsAppMessageModel.updateOne(
           { messageId: message.id._serialized, sessionId },

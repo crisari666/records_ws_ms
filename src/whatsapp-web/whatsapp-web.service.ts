@@ -115,7 +115,6 @@ export class WhatsappWebService implements OnModuleInit {
     }
   }
 
-
   /**
    * Setup event listeners for WhatsApp client
    */
@@ -159,6 +158,7 @@ export class WhatsappWebService implements OnModuleInit {
         // Synchronize chats and messages with progress events
         try {
           this.logger.log(`🔄 Starting chat synchronization for session ${sessionId}`);
+          
           const result = await this.syncChatsWithProgress(sessionId);
           this.logger.log(`✅ Chat synchronization completed for session ${sessionId}: ${result.chatsProcessed} chats`);
 
@@ -197,11 +197,17 @@ export class WhatsappWebService implements OnModuleInit {
       this.emitAuthFailureEvent(sessionId, error);
     });
 
+    client.on('message', async (message) => {
+      console.log('On message event', {message});
+      //await this.storageService.saveCall(sessionId, call);
+    });
+
+
     client.on('message_create', async (message) => {
       try {
+        // console.log('message_create', {message});
         this.logger.log(`📤 Message received in session ${sessionId}: ${message.body?.substring(0, 50) || 'media message'}`);
         await this.storageService.saveMessage(sessionId, message);
-
         // Get the chat from the session and save/update it in the database
         try {
           const chat = await message.getChat();
@@ -245,14 +251,37 @@ export class WhatsappWebService implements OnModuleInit {
       }
     });
 
+    client.on('call', async (call) => {
+      console.log('call', {call});
+      //await this.storageService.saveCall(sessionId, call);
+    })
+    
     client.on('chat_removed', async (chat) => {
       try {
         this.logger.log(`🗑️ Chat removed in session ${sessionId}: ${chat.id._serialized}`);
         await this.storageService.markChatAsDeleted(sessionId, chat.id._serialized);
+        this.gateway.emitChatRemoved(sessionId, chat.id._serialized);
+        
+        // Create chat removed alert
+        try {
+          const sessionDoc = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
+          if (sessionDoc?._id) {
+            await this.alertsService.createChatRemovedAlert(
+              sessionDoc._id as mongoose.Types.ObjectId,
+              sessionId,
+              chat.id._serialized,
+              chat.timestamp,
+              `Chat removed: ${chat.name || chat.id._serialized}`
+            );
+          }
+        } catch (e) {
+          this.logger.error(`Failed to create chat removed alert for ${sessionId}`, e as Error);
+        }
       } catch (error) {
         this.logger.error(`Error handling chat_removed: ${error.message}`);
       }
     });
+  
 
     client.on('disconnected', async (reason) => {
       this.logger.warn(`⚠️ Session ${sessionId} disconnected: ${reason}`);
@@ -271,7 +300,7 @@ export class WhatsappWebService implements OnModuleInit {
         const sessionDoc = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
         await this.whatsAppSessionModel.updateOne({ sessionId }, { $set: { isDisconnected: true, closedAt: new Date() } });
         if (sessionDoc?._id) {
-          await this.alertsService.createDisconnectedAlert(sessionDoc._id as mongoose.Types.ObjectId, `Session ${sessionId} disconnected: ${reason}`);
+          await this.alertsService.createDisconnectedAlert(sessionDoc._id as mongoose.Types.ObjectId, sessionId, `Session ${sessionId} disconnected: ${reason}`);
         }
       } catch (e) {
         this.logger.error(`Failed to create disconnected alert for ${sessionId}`, e as Error);
@@ -289,6 +318,28 @@ export class WhatsappWebService implements OnModuleInit {
       try {
         this.logger.log(`🗑️ Message revoked (me) in session ${sessionId}: ${message.body?.substring(0, 50) || 'media message'}`);
         await this.storageService.markMessageAsDeleted(sessionId, message.id._serialized, 'me');
+        
+        const chatId = message.id.remote || message.from || message.to;
+        if (chatId) {
+          this.gateway.emitMessageDeleted(sessionId, chatId, message.id._serialized);
+        }
+        
+        // Create message deleted alert
+        try {
+          const sessionDoc = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
+          if (sessionDoc?._id && chatId) {
+            await this.alertsService.createMessageDeletedAlert(
+              sessionDoc._id as mongoose.Types.ObjectId,
+              sessionId,
+              message.id._serialized,
+              chatId,
+              message.timestamp,
+              `Message deleted by me: ${message.body?.substring(0, 50) || 'media message'}`
+            );
+          }
+        } catch (e) {
+          this.logger.error(`Failed to create message deleted alert for ${sessionId}`, e as Error);
+        }
       } catch (error) {
         this.logger.error(`Error handling message_revoke_me: ${error.message}`);
       }
@@ -300,10 +351,32 @@ export class WhatsappWebService implements OnModuleInit {
 
         // If we have the revoked message, save it first
         if (revokedMsg) {
-          await this.storageService.saveMessage(sessionId, revokedMsg);
+          await this.storageService.saveMessage(sessionId, message);
         }
 
-        await this.storageService.markMessageAsDeleted(sessionId, message.id._serialized, 'everyone');
+        await this.storageService.markMessageAsDeleted(sessionId, revokedMsg.id._serialized, 'everyone');
+        
+        const chatId = message.id.remote || message.from || message.to;
+        if (chatId) {
+          this.gateway.emitMessageDeleted(sessionId, chatId, revokedMsg.id._serialized);
+        }
+        
+        // Create message deleted alert
+        try {
+          const sessionDoc = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
+          if (sessionDoc?._id && chatId) {
+            await this.alertsService.createMessageDeletedAlert(
+              sessionDoc._id as mongoose.Types.ObjectId,
+              sessionId,
+              revokedMsg.id._serialized,
+              chatId,
+              revokedMsg.timestamp,
+              `Message deleted for everyone: ${message.body?.substring(0, 50) || 'media message'}`
+            );
+          }
+        } catch (e) {
+          this.logger.error(`Failed to create message deleted alert for ${sessionId}`, e as Error);
+        }
       } catch (error) {
         this.logger.error(`Error handling message_revoke_everyone: ${error.message}`);
       }
@@ -313,6 +386,24 @@ export class WhatsappWebService implements OnModuleInit {
       try {
         this.logger.log(`✏️ Message edited in session ${sessionId}: ${message.body?.substring(0, 50) || 'media message'}`);
         await this.storageService.updateMessageEdition(sessionId, message, String(newBody), String(prevBody));
+        
+        // Create message edited alert
+        try {
+          const sessionDoc = await this.whatsAppSessionModel.findOne({ sessionId }).exec();
+          const chatId = message.id.remote || message.from || message.to;
+          if (sessionDoc?._id && chatId) {
+            await this.alertsService.createMessageEditedAlert(
+              sessionDoc._id as mongoose.Types.ObjectId,
+              sessionId,
+              message.id._serialized,
+              chatId,
+              message.timestamp,
+              `Message edited: ${String(newBody)?.substring(0, 50) || 'media message'}`
+            );
+          }
+        } catch (e) {
+          this.logger.error(`Failed to create message edited alert for ${sessionId}`, e as Error);
+        }
       } catch (error) {
         this.logger.error(`Error handling message_edit: ${error.message}`);
       }
@@ -326,8 +417,15 @@ export class WhatsappWebService implements OnModuleInit {
       this.logger.log(`💾 Session ${sessionId} data saved to MongoDB`);
     });
 
+
     client.on('loading_screen', (percent, message) => {
       this.logger.log(`📱 Session ${sessionId} loading: ${percent}% - ${message}`);
+      // Emit sync event during loading
+      this.gateway.emitSyncChats(sessionId, {
+        nChats: 0,
+        currentChat: 0,
+        messagesSynced: 0,
+      });
     });
   }
 
@@ -638,6 +736,7 @@ export class WhatsappWebService implements OnModuleInit {
         lastSeen: session.lastSeen,
         updatedAt: session.updatedAt,
         createdAt: session.createdAt,
+        refId: session.refId,
       }));
     } catch (error) {
       this.logger.error('Error fetching stored sessions:', error);
@@ -695,9 +794,9 @@ export class WhatsappWebService implements OnModuleInit {
       // Fetch messages from WhatsApp
       const chat = await session.client.getChatById(chatId);
       const messages = (await chat.fetchMessages({ limit: limit || 50 })).sort((a, b) => a.timestamp - b.timestamp);
-
       this.logger.log(`📨 Retrieved ${messages.length} messages from chat ${chatId} in session ${sessionId}`);
 
+      console.log('messages', {messages});
       // Store messages in database (batch operation to avoid duplicates)
       try {
         // Save messages concurrently with proper chatId
@@ -731,6 +830,8 @@ export class WhatsappWebService implements OnModuleInit {
         isForwarded: msg.isForwarded,
         isStarred: msg.isStarred,
         isDeleted: msg.isDeleted,
+        type: msg.type,
+        rawData: msg.rawData
       }));
     } catch (error) {
       this.logger.error(`Error getting messages from chat ${chatId} in session ${sessionId}:`, error);
@@ -844,7 +945,7 @@ export class WhatsappWebService implements OnModuleInit {
           this.logger.log(`📨 Fetching messages for chat ${i + 1}/${nChats}: ${chatId}`);
 
           const chatInstance = await session.client.getChatById(chatId);
-          const messages = await chat.fetchMessages({ limit: 50 })
+          const messages = await chatInstance.fetchMessages({ limit: limitPerChat })
 
           if (messages.length > 0) {
             // Save messages to database with progress callback
@@ -958,6 +1059,7 @@ export class WhatsappWebService implements OnModuleInit {
         hasQuotedMsg: msg.hasQuotedMsg,
         isForwarded: msg.isForwarded,
         isStarred: msg.isStarred,
+        rawData: msg.rawData,
       }));
     } catch (error) {
       this.logger.error(`Error getting stored messages: ${error.message}`);

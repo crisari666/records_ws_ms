@@ -36,7 +36,7 @@ export class WhatsAppSession {
   status: string;
 
   @Prop({ type: String, default: null })
-  qrCode: String
+  qrCode: string
 
   // Last time the session was active/seen
   @Prop({ type: Date, default: Date.now })
