@@ -65,6 +65,18 @@ export class WhatsAppMessage {
   @Prop({ default: null })
   mediaType: string;
 
+  // Media file path (stored locally for easy access)
+  @Prop({ default: null })
+  mediaPath: string;
+
+  // Media file size in bytes
+  @Prop({ default: null })
+  mediaSize: number;
+
+  // Media filename (if available)
+  @Prop({ default: null })
+  mediaFilename: string;
+
   // Whether the message has a quoted message
   @Prop({ default: false })
   hasQuotedMsg: boolean;

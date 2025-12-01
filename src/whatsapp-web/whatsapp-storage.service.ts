@@ -4,15 +4,33 @@ import { Model } from 'mongoose';
 import { WhatsAppChat, WhatsAppChatDocument } from './schemas/whatsapp-chat.schema';
 import { WhatsAppMessage, WhatsAppMessageDocument } from './schemas/whatsapp-message.schema';
 import * as WAWebJS from 'whatsapp-web.js';
+import * as path from 'path';
+import * as fs from 'fs/promises';
 
 @Injectable()
 export class WhatsappStorageService {
   private readonly logger = new Logger(WhatsappStorageService.name);
+  private readonly mediaPath = path.join(process.cwd(), 'media');
 
   constructor(
     @InjectModel(WhatsAppChat.name) private whatsAppChatModel: Model<WhatsAppChatDocument>,
     @InjectModel(WhatsAppMessage.name) private whatsAppMessageModel: Model<WhatsAppMessageDocument>,
-  ) { }
+  ) {
+    // Ensure media directory exists
+    this.ensureMediaDirectory();
+  }
+
+  /**
+   * Ensure media directory exists
+   */
+  private async ensureMediaDirectory(): Promise<void> {
+    try {
+      await fs.mkdir(this.mediaPath, { recursive: true });
+      this.logger.log(`📁 Media directory ensured: ${this.mediaPath}`);
+    } catch (error) {
+      this.logger.error(`Error creating media directory: ${error.message}`);
+    }
+  }
 
   /**
    * Save or update a chat in the database
@@ -147,6 +165,9 @@ export class WhatsappStorageService {
         isStatus: message.isStatus || false,
         hasMedia: message.hasMedia || false,
         mediaType: message.hasMedia ? message.type : null,
+        mediaPath: null, // Will be updated when media is downloaded
+        mediaSize: null,
+        mediaFilename: null,
         hasQuotedMsg: message.hasQuotedMsg || false,
         isStarred: message.isStarred || false,
         isGif: message.isGif || false,
@@ -228,6 +249,9 @@ export class WhatsappStorageService {
                 isStatus: message.isStatus || false,
                 hasMedia: message.hasMedia || false,
                 mediaType: message.hasMedia ? message.type : null,
+                mediaPath: null, // Will be updated when media is downloaded
+                mediaSize: null,
+                mediaFilename: null,
                 hasQuotedMsg: message.hasQuotedMsg || false,
                 isStarred: message.isStarred || false,
                 isGif: message.isGif || false,
@@ -442,6 +466,122 @@ export class WhatsappStorageService {
     } catch (error) {
       this.logger.error(`Error getting stored messages: ${error.message}`);
       throw error;
+    }
+  }
+
+  /**
+   * Save media file to local storage
+   * @param sessionId - Session ID
+   * @param messageId - Message ID
+   * @param media - Media object from WhatsApp
+   * @returns Media file path relative to media directory
+   */
+  async saveMediaFile(sessionId: string, messageId: string, media: WAWebJS.MessageMedia): Promise<{
+    mediaPath: string;
+    mediaSize: number;
+    mediaFilename: string;
+  } | null> {
+    try {
+      if (!media || !media.data) {
+        this.logger.warn(`No media data to save for message ${messageId}`);
+        return null;
+      }
+
+      // Determine file extension from mimetype
+      const extension = this.getFileExtension(media.mimetype);
+      if (!extension) {
+        this.logger.warn(`Unknown mimetype: ${media.mimetype} for message ${messageId}`);
+        return null;
+      }
+
+      // Create session-specific directory
+      const sessionMediaPath = path.join(this.mediaPath, sessionId);
+      await fs.mkdir(sessionMediaPath, { recursive: true });
+
+      // Generate filename: messageId.extension
+      const filename = `${messageId.replace(/[^a-zA-Z0-9]/g, '_')}.${extension}`;
+      const filePath = path.join(sessionMediaPath, filename);
+
+      // Convert base64 data to buffer
+      const buffer = Buffer.from(media.data, 'base64');
+
+      // Save file
+      await fs.writeFile(filePath, buffer);
+
+      // Calculate file size
+      const stats = await fs.stat(filePath);
+      const fileSize = stats.size;
+
+      // Return relative path for easy access (e.g., sessionId/filename)
+      const relativePath = path.join(sessionId, filename).replace(/\\/g, '/');
+
+      this.logger.log(`💾 Media file saved: ${relativePath} (${fileSize} bytes)`);
+
+      return {
+        mediaPath: relativePath,
+        mediaSize: fileSize,
+        mediaFilename: media.filename || filename,
+      };
+    } catch (error) {
+      this.logger.error(`Error saving media file for message ${messageId}: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Get file extension from mimetype
+   */
+  private getFileExtension(mimetype: string): string | null {
+    const mimeToExt: { [key: string]: string } = {
+      'image/jpeg': 'jpg',
+      'image/jpg': 'jpg',
+      'image/png': 'png',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      'video/mp4': 'mp4',
+      'video/quicktime': 'mov',
+      'video/x-msvideo': 'avi',
+      'audio/ogg; codecs=opus': 'ogg',
+      'audio/ogg': 'ogg',
+      'audio/mpeg': 'mp3',
+      'audio/mp4': 'm4a',
+      'audio/webm': 'webm',
+      'audio/aac': 'aac',
+      'application/pdf': 'pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+      'application/msword': 'doc',
+      'application/vnd.ms-excel': 'xls',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+      'text/plain': 'txt',
+    };
+
+    // Handle mimetype with parameters (e.g., "audio/ogg; codecs=opus")
+    const baseMime = mimetype.split(';')[0].trim();
+    return mimeToExt[baseMime] || mimeToExt[mimetype] || null;
+  }
+
+  /**
+   * Update message with media path
+   */
+  async updateMessageMedia(
+    sessionId: string,
+    messageId: string,
+    mediaInfo: { mediaPath: string; mediaSize: number; mediaFilename: string }
+  ): Promise<void> {
+    try {
+      await this.whatsAppMessageModel.updateOne(
+        { messageId, sessionId },
+        {
+          $set: {
+            mediaPath: mediaInfo.mediaPath,
+            mediaSize: mediaInfo.mediaSize,
+            mediaFilename: mediaInfo.mediaFilename,
+          }
+        }
+      );
+      this.logger.debug(`✏️ Message media path updated: ${messageId}`);
+    } catch (error) {
+      this.logger.error(`Error updating message media path: ${error.message}`);
     }
   }
 }

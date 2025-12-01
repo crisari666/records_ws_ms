@@ -205,7 +205,7 @@ export class WhatsappWebService implements OnModuleInit {
 
     client.on('message_create', async (message) => {
       try {
-        // console.log('message_create', {message});
+        console.log('message_create', {message});
         this.logger.log(`📤 Message received in session ${sessionId}: ${message.body?.substring(0, 50) || 'media message'}`);
         await this.storageService.saveMessage(sessionId, message);
         // Get the chat from the session and save/update it in the database
@@ -217,10 +217,9 @@ export class WhatsappWebService implements OnModuleInit {
           this.logger.warn(`Error saving chat for message: ${chatError.message}`);
           // Continue execution even if chat save fails
         }
-
         // Emit socket event to the session room with the same structure as getStoredMessages
         const chatId = message.id.remote || message.from || message.to;
-        const messageData = {
+        const messageData: any = {
           messageId: message.id._serialized,
           chatId: chatId,
           body: message.body || '',
@@ -240,6 +239,40 @@ export class WhatsappWebService implements OnModuleInit {
           isForwarded: message.isForwarded || false,
           isStarred: message.isStarred || false,
         };
+
+        // Handle media files
+        if(message.hasMedia){
+          try {
+            const media = await message.downloadMedia();
+            if (media && media.data) {
+              // Save media file to local storage
+              const mediaInfo = await this.storageService.saveMediaFile(
+                sessionId,
+                message.id._serialized,
+                media
+              );
+              
+              if (mediaInfo) {
+                // Update message document with media path
+                await this.storageService.updateMessageMedia(
+                  sessionId,
+                  message.id._serialized,
+                  mediaInfo
+                );
+                
+                // Add media info to message data for socket event
+                messageData.mediaPath = mediaInfo.mediaPath;
+                messageData.mediaSize = mediaInfo.mediaSize;
+                messageData.mediaFilename = mediaInfo.mediaFilename;
+                
+                this.logger.log(`📎 Media saved for message ${message.id._serialized}: ${mediaInfo.mediaPath}`);
+              }
+            }
+          } catch (mediaError) {
+            this.logger.error(`Error downloading/saving media for message ${message.id._serialized}: ${mediaError.message}`);
+            // Continue execution even if media save fails
+          }
+        }
         this.emitNewMessageEvent(sessionId, messageData);
 
         this.rabbitService.emitToRecordsAiChatsAnalysisService('message_create', {
@@ -735,6 +768,7 @@ export class WhatsappWebService implements OnModuleInit {
         _id: session._id,
         sessionId: session.sessionId,
         status: session.status,
+        title: session.title,
         lastSeen: session.lastSeen,
         updatedAt: session.updatedAt,
         createdAt: session.createdAt,
